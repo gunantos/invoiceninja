@@ -15,7 +15,7 @@ Just make sure to add the `invoice-ninja` tag to your question.
 
 #### Note: v5 is now tagged Stable! To upgrade from v4 you need to [install v5](https://invoiceninja.github.io/docs/self-host-installation/) as a separate app and then use the migration tool in the latest version of v4 on Settings > Account Management.
 
-All Pro and Enterprise features from the hosted app are included in the open-source code. We offer a $30 per year white-label license to remove the Invoice Ninja branding from client facing parts of the app.
+All Pro and Enterprise features from the hosted app are included in the open-code. We offer a $30 per year white-label license to remove the Invoice Ninja branding from client facing parts of the app.
 
 The self-host zip includes all third party libraries whereas downloading the code from GitHub requires using Composer to install the dependencies.
 
@@ -26,7 +26,6 @@ The self-host zip includes all third party libraries whereas downloading the cod
 * [StackOverflow](https://stackoverflow.com/tags/invoice-ninja/)
 
 ## Referral Program
-* Earn 50% of Pro & Enterprise Plans up to 4 years - [Learn more](https://www.invoiceninja.com/referral-program/)
 
 ## Mobile App
 * [iPhone](https://itunes.apple.com/us/app/invoice-ninja/id1435514417?ls=1&mt=8)
@@ -35,7 +34,7 @@ The self-host zip includes all third party libraries whereas downloading the cod
 
 ## Installation Options
 * [Ansible](https://github.com/invoiceninja/ansible-installer)
-* [Self-Host Zip](https://docs.invoiceninja.com/install.html)
+* [Self-Host Zip](https://invoice-ninja.readthedocs.io/en/latest/install.html)
 * [Docker File](https://hub.docker.com/r/invoiceninja/invoiceninja/)
 * [Cloudron](https://cloudron.io/store/com.invoiceninja.cloudronapp.html)
 * [Softaculous](https://www.softaculous.com/apps/ecommerce/Invoice_Ninja)
@@ -49,7 +48,7 @@ The self-host zip includes all third party libraries whereas downloading the cod
 ## Development
 * [API Documentation](https://invoice-ninja.readthedocs.io/en/latest/api.html)
 * [PHP SDK](https://github.com/invoiceninja/sdk-php)
-* [Zend Framework](https://github.com/alexz707/InvoiceNinjaModule)
+* [Laminas Framework](https://github.com/alexz707/InvoiceNinjaModule)
 * [Custom Module](https://invoice-ninja.readthedocs.io/en/latest/custom_modules.html) | [Watch Video](https://www.youtube.com/watch?v=8jJ-PYuq85k)
 
 ## Third Party Modules
@@ -92,5 +91,5 @@ For information on how contribute to Invoice Ninja, please see our [contributing
 * [Mike Skaggs](https://github.com/titan-fail)
 
 ## License
-Invoice Ninja is released under the Attribution Assurance License.  
+Invoice Ninja is released under the Elastic License 2.0
 See [LICENSE](LICENSE) for details.

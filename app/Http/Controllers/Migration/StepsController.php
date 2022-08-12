@@ -6,15 +6,22 @@ use App\Http\Controllers\BaseController;
 use App\Http\Requests\MigrationAuthRequest;
 use App\Http\Requests\MigrationCompaniesRequest;
 use App\Http\Requests\MigrationEndpointRequest;
+use App\Http\Requests\MigrationForwardRequest;
 use App\Http\Requests\MigrationTypeRequest;
+use App\Jobs\HostedMigration;
 use App\Libraries\Utils;
 use App\Models\Account;
+use App\Models\AccountGatewayToken;
+use App\Models\Client;
 use App\Services\Migration\AuthService;
 use App\Services\Migration\CompanyService;
 use App\Services\Migration\CompleteService;
 use App\Traits\GenerateMigrationResources;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
+use Validator;
+use GuzzleHttp\RequestOptions;
 
 class StepsController extends BaseController
 {
@@ -45,6 +52,17 @@ class StepsController extends BaseController
      */
     public function start()
     {
+        if(Utils::isNinja()){
+            
+            session()->put('MIGRATION_ENDPOINT', 'https://v5-app1.invoicing.co');
+        //    session()->put('MIGRATION_ENDPOINT', 'http://ninja.test:8000');
+            session()->put('MIGRATION_ACCOUNT_TOKEN','');
+            session()->put('MIGRAITON_API_SECRET', null);
+
+            return $this->companies();
+
+        }
+
         return view('migration.start');
     }
 
@@ -65,17 +83,12 @@ class StepsController extends BaseController
     {
         session()->put('MIGRATION_TYPE', $request->option);
 
-        if ($request->option == 0) {
-
-            session()->put('MIGRATION_ENDPOINT', 'https://invoicing.co');
+        if ($request->option == 0 || $request->option == '0') {
 
             return redirect(
-                url('/migration/auth')
+                url('/migration/companies?hosted=true')
             );
 
-            // return redirect(
-            //     url('/migration/endpoint')
-            // );
         }
 
         return redirect(
@@ -83,8 +96,145 @@ class StepsController extends BaseController
         );
     }
 
+    public function forwardUrl(Request $request)
+    {
+
+        if(Utils::isNinjaProd())
+            return $this->autoForwardUrl();
+        
+        $rules = [
+            'url' => 'nullable|url',
+        ];
+
+        $validator = Validator::make($request->all(), $rules);
+
+        if ($validator->fails()) {
+            return back()
+                ->withErrors($validator)
+                ->withInput();
+        }
+
+        $account_settings = \Auth::user()->account->account_email_settings;
+
+        if(strlen($request->input('url')) == 0) {
+            $account_settings->is_disabled = false;
+        }
+        else {
+            $account_settings->is_disabled = true;
+        }
+
+        $account_settings->forward_url_for_v5 = rtrim($request->input('url'),'/');
+        $account_settings->save();
+
+        return back();
+    }
+
+    public function disableForwarding()
+    {
+        $account = \Auth::user()->account;
+
+        $account_settings = $account->account_email_settings;
+        $account_settings->forward_url_for_v5 = '';
+        $account_settings->is_disabled = false;
+        $account_settings->save();
+
+        return back();
+    }
+
+    private function autoForwardUrl()
+    {
+
+        $url = 'https://invoicing.co/api/v1/confirm_forwarding';
+        // $url = 'http://devhosted.test:8000/api/v1/confirm_forwarding';
+
+        $headers = [
+            'X-API-HOSTED-SECRET' => config('ninja.ninja_hosted_secret'),
+            'X-Requested-With' => 'XMLHttpRequest',
+            'Content-Type' => 'application/json',
+        ];
+
+        $account = \Auth::user()->account;
+        $gateway_reference = '';
+
+        $ninja_client = Client::where('public_id', $account->id)->first();
+
+        if($ninja_client){
+            $agt = AccountGatewayToken::where('client_id', $ninja_client->id)->first();
+
+            if($agt)
+                $gateway_reference = $agt->token;
+        }
+
+        $body = [
+            'account_key' => $account->account_key,
+            'email' => $account->getPrimaryUser()->email,
+            'plan' => $account->company->plan,
+            'plan_term' =>$account->company->plan_term,
+            'plan_started' =>$account->company->plan_started,
+            'plan_paid' =>$account->company->plan_paid,
+            'plan_expires' =>$account->company->plan_expires,
+            'trial_started' =>$account->company->trial_started,
+            'trial_plan' =>$account->company->trial_plan,
+            'plan_price' =>$account->company->plan_price,
+            'num_users' =>$account->company->num_users,
+            'gateway_reference' => $gateway_reference,
+        ];
+
+        $client =  new \GuzzleHttp\Client([
+            'headers' =>  $headers,
+        ]);
+
+        $response = $client->post($url,[
+            RequestOptions::JSON => $body, 
+            RequestOptions::ALLOW_REDIRECTS => false
+        ]);
+
+        if($response->getStatusCode() == 401){
+            info("autoForwardUrl");
+            info($response->getBody());
+
+        } elseif ($response->getStatusCode() == 200) {
+
+            $message_body = json_decode($response->getBody(), true);
+
+            $forwarding_url = $message_body['forward_url'];
+
+                $account_settings = $account->account_email_settings;
+
+                if(strlen($forwarding_url) == 0) {
+                    $account_settings->is_disabled = false;
+                }
+                else {
+                    $account_settings->is_disabled = true;
+                }
+
+                $account_settings->forward_url_for_v5 = rtrim($forwarding_url,'/');
+                $account_settings->save();
+
+            $billing_transferred = $message_body['billing_transferred'];
+
+            if($billing_transferred == 'true'){
+
+                $company = $account->company;
+                $company->plan = null;
+                $company->plan_expires = null;
+                $company->save();
+            }
+
+
+        } else {
+            info("failed to autoforward");
+            info(json_decode($response->getBody()->getContents()));
+            // dd('else');
+        }
+
+        return back();
+
+    }
+
     public function endpoint()
     {
+
         if ($this->shouldGoBack('endpoint')) {
             return redirect(
                 url($this->access['endpoint']['redirect'])
@@ -175,23 +325,38 @@ class StepsController extends BaseController
                 url($this->access['companies']['redirect'])
             );
         }
+        $bool = true;
+
+        if(Utils::isNinja())
+        {
+
+            $this->dispatch(new HostedMigration(auth()->user(), $request->all(), config('database.default')));
+            
+            return view('migration.completed');
+   
+        }
+
+        $completeService = (new CompleteService(session('MIGRATION_ACCOUNT_TOKEN')));
 
         try {
             $migrationData = $this->generateMigrationData($request->all());
-
-            $completeService = (new CompleteService(session('MIGRATION_ACCOUNT_TOKEN')))
-                ->data($migrationData)
+            
+                $completeService->data($migrationData)
                 ->endpoint(session('MIGRATION_ENDPOINT'))
                 ->start();
         }
-        finally {
+        catch(\Exception $e){
+            info($e->getMessage());
+            return view('migration.completed', ['customMessage' => $e->getMessage()]);
+        }
+     
         
             if ($completeService->isSuccessful()) {
                 return view('migration.completed');
             }
 
             return view('migration.completed', ['customMessage' => $completeService->getErrors()[0]]);
-        }
+        
     }
 
     public function completed()
@@ -257,9 +422,10 @@ class StepsController extends BaseController
                 'products' => $this->getProducts(),
                 'credits' => $this->getCreditsNotes(),
                 'invoices' => $this->getInvoices(),
+                'recurring_expenses' => $this->getRecurringExpenses(),
                 'recurring_invoices' => $this->getRecurringInvoices(),
                 'quotes' => $this->getQuotes(),
-                'payments' => array_merge($this->getPayments(), $this->getCredits()),
+                'payments' => $this->getPayments(),
                 'documents' => $this->getDocuments(),
                 'expense_categories' => $this->getExpenseCategories(),
                 'task_statuses' => $this->getTaskStatuses(),
@@ -273,8 +439,6 @@ class StepsController extends BaseController
 
             Storage::makeDirectory('migrations');
             $file = Storage::path("migrations/{$fileName}.zip");
-
-            //$file = storage_path("migrations/{$fileName}.zip");
 
             ksort($localMigrationData);
 

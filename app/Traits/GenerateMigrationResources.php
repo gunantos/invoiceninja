@@ -2,6 +2,7 @@
 
 namespace App\Traits;
 
+use App\Libraries\Utils;
 use App\Models\AccountGateway;
 use App\Models\AccountGatewaySettings;
 use App\Models\AccountGatewayToken;
@@ -19,6 +20,7 @@ use App\Models\PaymentMethod;
 use App\Models\PaymentTerm;
 use App\Models\Product;
 use App\Models\Project;
+use App\Models\RecurringExpense;
 use App\Models\Task;
 use App\Models\TaskStatus;
 use App\Models\TaxRate;
@@ -71,11 +73,21 @@ trait GenerateMigrationResources
 
     protected function getCompany()
     {
-info("get company");
+        info("get company");
+
+        $financial_year_start = null;
+        if($this->account->financial_year_start)
+        {
+            //2000-02-01 format
+            $exploded_date = explode("-", $this->account->financial_year_start);
+
+            $financial_year_start = (int)$exploded_date[1];
+
+        }
 
         return [
             'first_day_of_week' => $this->account->start_of_week,
-            'first_month_of_year' => $this->account->financial_year_start,
+            'first_month_of_year' => $financial_year_start,
             'version' => NINJA_VERSION,
             'referral_code' => $this->account->referral_code ?: '',
             'account_id' => $this->account->id,
@@ -90,6 +102,7 @@ info("get company");
             'custom_surcharge_taxes1' => $this->account->custom_invoice_taxes1,
             'custom_surcharge_taxes2' => $this->account->custom_invoice_taxes2,
             'subdomain' => $this->account->subdomain,
+            'portal_mode' => 'subdomain',
             'size_id' => $this->account->size_id,
             'enable_modules' => $this->account->enabled_modules,
             'custom_fields' => $this->account->custom_fields,
@@ -130,10 +143,17 @@ info("get company");
     {
         info("get co settings");
 
+        $timezone_id = $this->account->timezone_id ? $this->account->timezone_id : 15;
+
+        if($timezone_id > 57)
+            $timezone_id = (string)($timezone_id - 1);
+
         return [
+            'entity_send_time' => 6,
+            'auto_bill_date' => $this->account->auto_bill_on_due_date ? 'on_due_date' : 'on_send_date',
             'auto_bill' => $this->transformAutoBill($this->account->token_billing_id),
             'payment_terms' => $this->account->payment_terms ? (string) $this->account->payment_terms : '',
-            'timezone_id' => $this->account->timezone_id ? (string) $this->account->timezone_id : '15',
+            'timezone_id' => $timezone_id,
             'date_format_id' => $this->account->date_format_id ? (string) $this->account->date_format_id : '1',
             'currency_id' => $this->account->currency_id ? (string) $this->account->currency_id : '1',
             'name' => $this->account->name ?: trans('texts.untitled'),
@@ -171,7 +191,7 @@ info("get company");
             'all_pages_footer' => $this->account->all_pages_footer ? (bool) $this->account->all_pages_footer : true,
             'all_pages_header' => $this->account->all_pages_header ? (bool) $this->account->all_pages_header : true,
             'show_currency_code' => $this->account->show_currency_code ? (bool) $this->account->show_currency_code : false,
-            'enable_client_portal_password' => $this->account->enable_portal_password ? (bool) $this->account->enable_portal_password : true,
+            'enable_client_portal_password' => $this->account->enable_portal_password ? (bool) $this->account->enable_portal_password : false,
             'send_portal_password' => $this->account->send_portal_password ? (bool) $this->account->send_portal_password : false,
             'recurring_number_prefix' => $this->account->recurring_invoice_number_prefix ? $this->account->recurring_invoice_number_prefix : 'R',
             'enable_client_portal' => $this->account->enable_client_portal ? (bool) $this->account->enable_client_portal : false,
@@ -189,10 +209,9 @@ info("get company");
             'client_number_pattern' => $this->account->client_number_pattern ?: '',
             'payment_number_pattern' => '',
             'payment_number_counter' => 0,
-            'payment_terms' => $this->account->payment_terms ?: '',
             'reset_counter_frequency_id' => $this->account->reset_counter_frequency_id ? (string) $this->transformFrequencyId
             ($this->account->reset_counter_frequency_id) : '0',
-            'payment_type_id' => $this->account->payment_type_id ? (string) $this->account->payment_type_id : '1',
+            'payment_type_id' => $this->account->payment_type_id ? (string) $this->transformPaymentType($this->account->payment_type_id) : '1',
             'reset_counter_date' => $this->account->reset_counter_date ?: '',
             'tax_name1' => $this->account->tax_name1 ?: '',
             'tax_rate1' => $this->account->tax_rate1 ?: 0,
@@ -211,17 +230,87 @@ info("get company");
             'auto_archive_quote' => $this->account->auto_archive_quote ? (bool) $this->account->auto_archive_quote : false,
             'auto_email_invoice' => $this->account->auto_email_invoice ? (bool) $this->account->auto_email_invoice : false,
             'counter_padding' => $this->account->invoice_number_padding ?: 4,
+            'reply_to_email' => $this->account->account_email_settings->reply_to_email ?: '',
+            'bcc_email' => $this->account->account_email_settings->bcc_email ?: '',
+            'email_subject_invoice' => $this->account->account_email_settings->email_subject_invoice ?: '',
+            'email_subject_quote' => $this->account->account_email_settings->email_subject_quote ?: '',
+            'email_subject_payment' => $this->account->account_email_settings->email_subject_payment ?: '',
+            'email_template_invoice' => $this->account->account_email_settings->email_template_invoice ?: '',
+            'email_template_quote' => $this->account->account_email_settings->email_template_quote ?: '',
+            'email_template_payment' => $this->account->account_email_settings->email_template_payment ?: '',
+            'email_subject_reminder1' => $this->account->account_email_settings->email_subject_reminder1 ?: '',
+            'email_subject_reminder2' => $this->account->account_email_settings->email_subject_reminder2 ?: '',
+            'email_subject_reminder3' => $this->account->account_email_settings->email_subject_reminder3 ?: '',
+            'email_subject_reminder_endless' => $this->account->account_email_settings->email_subject_reminder4 ?: '',
+            'email_template_reminder1' => $this->account->account_email_settings->email_template_reminder1 ?: '',
+            'email_template_reminder2' => $this->account->account_email_settings->email_template_reminder2 ?: '',
+            'email_template_reminder3' => $this->account->account_email_settings->email_template_reminder3 ?: '',
+            'email_template_reminder_endless' => $this->account->account_email_settings->email_template_reminder4 ?: '',
+            'late_fee_amount1' => $this->account->account_email_settings->late_fee1_amount ?: 0,
+            'late_fee_amount2' => $this->account->account_email_settings->late_fee2_amount ?: 0,
+            'late_fee_amount3' => $this->account->account_email_settings->late_fee3_amount ?: 0,
+            'late_fee_percent1' => $this->account->account_email_settings->late_fee1_percent ?: 0,
+            'late_fee_percent2' => $this->account->account_email_settings->late_fee2_percent ?: 0,
+            'late_fee_percent3' => $this->account->account_email_settings->late_fee3_percent ?: 0,
+            'enable_reminder1' => $this->account->enable_reminder1 ? true : false,
+            'enable_reminder2' => $this->account->enable_reminder2 ? true : false,
+            'enable_reminder3' => $this->account->enable_reminder3 ? true : false,
+            'enable_reminder_endless' => $this->account->enable_reminder4 ? true : false,
+            'num_days_reminder1' => $this->account->num_days_reminder1 ?: 0,
+            'num_days_reminder2' => $this->account->num_days_reminder2 ?: 0,
+            'num_days_reminder3' => $this->account->num_days_reminder3 ?: 0,
+            'schedule_reminder1' => $this->buildReminderString($this->account->direction_reminder1, $this->account->field_reminder1),
+            'schedule_reminder2' => $this->buildReminderString($this->account->direction_reminder2, $this->account->field_reminder2),
+            'schedule_reminder3' => $this->buildReminderString($this->account->direction_reminder3, $this->account->field_reminder3),
+            'endless_reminder_frequency_id' => $this->account->account_email_settings->reset_counter_frequency_id ? $this->transformFrequencyId($this->account->account_email_settings->reset_counter_frequency_id) : 0,
+            'email_signature' => $this->account->email_footer ?: '',
+            'email_style' => $this->getEmailStyle($this->account->email_design_id),
+            'custom_message_dashboard' => $this->account->customMessage('dashboard'),
+            'custom_message_unpaid_invoice' => $this->account->customMessage('unpaid_invoice'),
+            'custom_message_paid_invoice' => $this->account->customMessage('paid_invoice'),
+            'custom_message_unapproved_quote' => $this->account->customMessage('unapproved_quote'),
         ];
+    }
+
+    private function getEmailStyle($id){
+
+        switch ($id) {
+            case 1:
+                return 'plain';
+                break;
+            case 2:
+                return 'light';
+                break;
+            case 3:
+                return 'dark';
+                break;
+
+            default:
+                return 'light';
+
+                break;
+        }
+
+    }
+
+    private function buildReminderString($direction, $field)
+    {
+
+        $direction_string = $direction == 1 ? "after_" : "before_";
+        $field_string = $field == 1 ? "due_date" : "invoice_date";
+
+        return $direction_string.$field_string;
+
     }
 
     public function getTaxRates()
     {
-        info("get tax rates");
-
 
         $rates = TaxRate::where('account_id', $this->account->id)
             ->withTrashed()
             ->get();
+
+        info("get tax rates => " . $rates->count());
 
         $transformed = [];
 
@@ -241,10 +330,12 @@ info("get company");
     }
 
     protected function getClients()
-    {info("get clients");
+    {
 
         $clients = [];
 
+        info("get clients => ". $this->account->clients()->count());
+        
         foreach ($this->account->clients()->withTrashed()->get() as $client) {
             
             $number = $client->id_number;
@@ -293,8 +384,6 @@ info("get company");
 
     private function getClientSettings($client)
     {
-        info("get client settings");
-
 
         $settings = new \stdClass();
         $settings->currency_id = $client->currency_id ? (string) $client->currency_id : (string) $client->account->currency_id;
@@ -311,11 +400,12 @@ info("get company");
 
     protected function getClientContacts($client)
     {
-        info("get client contacts");
-
+     
         $contacts = Contact::where('client_id', $client->id)->withTrashed()->get();
 
         $transformed = [];
+
+        info("Importing contacts => " . $contacts->count());
 
         foreach ($contacts as $contact) {
             $transformed[] = [
@@ -350,6 +440,9 @@ info("get company");
     {
         $transformed = [];
 
+        if(!Utils::isNinja())
+            return $transformed;
+        
         $ninja_client = Client::where('public_id', $this->account->id)->first();
 
         if(!$ninja_client)
@@ -358,9 +451,19 @@ info("get company");
         $agts = AccountGatewayToken::where('client_id', $ninja_client->id)->get();
         $is_default = true;
 
+        if(count($agts) == 0) {
+            $transformed[] = [
+                'client' => $ninja_client
+            ];
+        }
+
         foreach($agts as $agt) {
 
             $payment_method = $agt->default_payment_method;
+
+            if(!$payment_method)
+                continue;
+
             $contact = Contact::where('id', $payment_method->contact_id)->withTrashed()->first();
 
             $transformed[] = [
@@ -384,11 +487,12 @@ info("get company");
 
     protected function getProducts()
     {
-        info("get products");
 
         $products = Product::where('account_id', $this->account->id)
             ->withTrashed()
             ->get();
+
+        info("get products " . $products->count());
 
         $transformed = [];
 
@@ -418,11 +522,12 @@ info("get company");
 
     public function getUsers()
     {
-        info("get users");
 
         $users = User::where('account_id', $this->account->id)
             ->withTrashed()
             ->get();
+
+        info("get users " . $users->count());
 
         $transformed = [];
 
@@ -432,12 +537,12 @@ info("get company");
                 'first_name' => $user->first_name ?: '',
                 'last_name' => $user->last_name ?: '',
                 'phone' => $user->phone ?: '',
-                'email' => $user->username,
+                'email' => str_contains($user->username, "@") ? $user->username : $user->email,
                 'confirmation_code' => $user->confirmation_code,
                 'failed_logins' => $user->failed_logins,
                 'referral_code' => $user->referral_code,
-                'oauth_user_id' => $user->oauth_user_id,
-                'oauth_provider_id' => $user->oauth_provider_id,
+                // 'oauth_user_id' => $user->oauth_user_id,
+                // 'oauth_provider_id' => $user->oauth_provider_id,
                 'google_2fa_secret' => '',
                 'accepted_terms_version' => $user->accepted_terms_version,
                 'password' => $user->password,
@@ -454,16 +559,15 @@ info("get company");
 
     private function getCreditsNotes()
     {
-        info("get credit notes");
 
         $credits = [];
+        $export_credits = collect([]);
 
-        $export_credits = Invoice::where('account_id', $this->account->id)
-            ->where('balance', '<', '0')
-            ->where('invoice_type_id', '=', INVOICE_TYPE_STANDARD)
-            ->where('is_public', true)
+        $export_credits = Credit::where('account_id', $this->account->id)->where('amount', '>', 0)->whereIsDeleted(false)
             ->withTrashed()
             ->get();
+
+        info("get credit notes => " . $export_credits->count());
 
         foreach ($export_credits as $credit) {
             $credits[] = [
@@ -471,35 +575,35 @@ info("get company");
                 'client_id' => $credit->client_id,
                 'user_id' => $credit->user_id,
                 'company_id' => $credit->account_id,
-                'status_id' => $credit->invoice_status_id,
-                'design_id' => $this->getDesignId($credit->invoice_design_id),
-                'number' => $credit->invoice_number,
-                'discount' => $credit->discount ? $credit->discount*-1: 0,
-                'is_amount_discount' => $credit->is_amount_discount ?: false,
-                'po_number' => $credit->po_number ?: '',
-                'date' => $credit->invoice_date,
-                'last_sent_date' => $credit->last_sent_date,
-                'due_date' => $credit->due_date,
+                'status_id' => 2,
+                'design_id' => 2,
+                'number' => $credit->credit_number ?: null,
+                'discount' => 0,
+                'is_amount_discount' => 0,
+                'po_number' => '',
+                'date' => $credit->date,
+                'last_sent_date' => null,
+                'due_date' => null,
                 'uses_inclusive_taxes' => $this->account->inclusive_taxes,
                 'is_deleted' => $credit->is_deleted,
-                'footer' => $credit->invoice_footer ?: '',
-                'public_notes' => $credit->public_notes ?: '',
-                'private_notes' => $credit->private_notes ?: '',
-                'terms' => $credit->terms ?: '',
-                'tax_name1' => $credit->tax_name1,
-                'tax_name2' => $credit->tax_name2,
-                'tax_rate1' => $credit->tax_rate1,
-                'tax_rate2' => $credit->tax_rate2,
+                'footer' => '',
+                'public_notes' => $credit->public_notes,
+                'private_notes' => $credit->private_notes,
+                'terms' => '',
+                'tax_name1' => '',
+                'tax_name2' => '',
+                'tax_rate1' => 0,
+                'tax_rate2' => 0,
                 'tax_name3' => '',
                 'tax_rate3' => 0,
-                'custom_value1' => $credit->custom_value1 ?: '',
-                'custom_value2' => $credit->custom_value2 ?: '',
+                'custom_value1' => '',
+                'custom_value2' => '',
                 'next_send_date' => null,
                 'amount' => $credit->amount ? $credit->amount * -1: 0,
-                'balance' => $credit->balance ? $credit->balance * -1 : 0,
-                'partial' => $credit->partial ? $credit->partial * -1 : 0,
-                'partial_due_date' => $credit->partial_due_date,
-                'line_items' => $this->getCreditItems($credit->invoice_items),
+                'balance' => $credit->balance ? $credit->balance  * -1: 0,
+                'partial' => 0,
+                'partial_due_date' => null,
+                'line_items' => $this->getCreditItems($credit->balance),
                 'created_at' => $credit->created_at ? Carbon::parse($credit->created_at)->toDateString() : null,
                 'updated_at' => $credit->updated_at ? Carbon::parse($credit->updated_at)->toDateString() : null,
                 'deleted_at' => $credit->deleted_at ? Carbon::parse($credit->deleted_at)->toDateString() : null,
@@ -511,16 +615,18 @@ info("get company");
 
 
     protected function getInvoices()
-    { info("get invoices");
+    { 
 
         $invoices = [];
 
         $export_invoices = Invoice::where('account_id', $this->account->id)
-            ->where('amount', '>=', 0)
+            // ->where('amount', '>=', 0)
             ->where('invoice_type_id', INVOICE_TYPE_STANDARD)
             ->where('is_recurring', false)
             ->withTrashed()
             ->get();
+
+        info("get invoices -> ". $export_invoices->count());
 
         foreach ($export_invoices as $invoice) {
             $invoices[] = [
@@ -566,6 +672,7 @@ info("get company");
                 'deleted_at' => $invoice->deleted_at ? Carbon::parse($invoice->deleted_at)->toDateString() : null,
                 'invitations' => $this->getResourceInvitations($invoice->invitations, 'invoice_id'),
                 'auto_bill_enabled' => $invoice->auto_bill,
+                'recurring_id' => $invoice->recurring_invoice_id,
             ];
         }
 
@@ -591,10 +698,59 @@ info("get company");
         return $design_id;
     }
 
+    protected function getRecurringExpenses()
+    {
+
+        $expenses = [];
+
+        $export_expenses = RecurringExpense::where('account_id', $this->account->id)
+            ->withTrashed()
+            ->get();        
+
+        info("get recurring Expenses => " . $export_expenses->count());
+
+        foreach ($export_expenses as $expense) {
+            $expenses[] = [
+                'id' => $expense->id,
+                'amount' => $expense->amount,
+                'company_id' => $this->account->id,
+                'client_id' => $expense->client_id,
+                'user_id' => $expense->user_id,
+                'custom_value1' => '',
+                'custom_value2' => '',
+                'custom_value3' => '',
+                'custom_value4' => '',
+                'category_id' => $expense->expense_category_id,
+                'currency_id' => $expense->expense_currency_id,
+                'frequency_id' => $this->transformFrequencyId($expense->frequency_id),
+                'invoice_currency_id' => $expense->invoice_currency_id,
+                'private_notes' =>  $expense->private_notes,
+                'public_notes' =>  $expense->public_notes,
+                'should_be_invoiced' =>  $expense->should_be_invoiced,
+                'tax_name1' =>  $expense->tax_name1,
+                'tax_name2' =>  $expense->tax_name2,
+                'tax_name3' => '',
+                'tax_rate1' =>  $expense->tax_rate1,
+                'tax_rate2' =>  $expense->tax_rate2,
+                'tax_rate3' => 0,
+                'vendor_id' =>  $expense->vendor_id,
+                'is_deleted' => $expense->is_deleted,
+                'next_send_date' => $this->getNextSendDateForMigration($expense),
+                'remaining_cycles' => $this->getRemainingCycles($expense),
+                'created_at' => $expense->created_at ? Carbon::parse($expense->created_at)->toDateString() : null,
+                'updated_at' => $expense->updated_at ? Carbon::parse($expense->updated_at)->toDateString() : null,
+                'deleted_at' => $expense->deleted_at ? Carbon::parse($expense->deleted_at)->toDateString() : null,
+            ];
+        }
+
+        return $expenses;
+
+
+
+    }
+
     protected function getRecurringInvoices()
     {
-        info("get recurring invoices");
-
 
         $invoices = [];
 
@@ -602,7 +758,9 @@ info("get company");
             ->where('amount', '>=', 0)
             ->where('is_recurring', true)
             ->withTrashed()
-            ->get();        
+            ->get();       
+
+        info("get recurring invoices => " . $export_invoices->count());
 
         foreach ($export_invoices as $invoice) {
             $invoices[] = [
@@ -648,11 +806,35 @@ info("get company");
                 'due_date_days' => $this->transformDueDate($invoice),
                 'remaining_cycles' => $this->getRemainingCycles($invoice),
                 'invitations' => $this->getResourceInvitations($invoice->invitations, 'recurring_invoice_id'),
-                'auto_bill_enabled' => $invoice->auto_bill,
+                'auto_bill_enabled' => $this->calcAutoBill($invoice),
+                'auto_bill' => $this->calcAutoBillEnabled($invoice),
             ];
         }
 
         return $invoices;
+
+    }
+
+    private function calcAutoBillEnabled($invoice)
+    {
+        if($invoice->auto_bill === 1)
+            return 'off';
+        elseif($invoice->auto_bill === 2)
+            return 'optin';
+        elseif($invoice->auto_bill === 3)
+            return 'optout';
+        elseif($invoice->auto_bill === 4)
+            return 'always';
+        else
+            return 'off';
+    }
+
+    private function calcAutoBill($invoice)
+    {
+        if($invoice->auto_bill == 4)
+            return 1;
+
+        return $invoice->client_enable_auto_bill;
 
     }
 
@@ -736,8 +918,13 @@ info("get company");
 
         $due_date_parts = explode("-", $invoice->due_date);
 
-        if(is_array($due_date_parts) && count($due_date_parts) >=3)
+        if(is_array($due_date_parts) && count($due_date_parts) >=3){
+
+            if($due_date_parts[2] == "00")
+                return "0";
+            
             return (string)$due_date_parts[2];
+        }
 
         return 'terms';
     }
@@ -834,7 +1021,7 @@ info("get company");
         if($invoice->is_public == 0)
             return 1;
 
-        if($invoice->end_date < now())
+        if($invoice->end_date && $invoice->end_date < now())
             return 4;
 
         return 1;
@@ -925,7 +1112,7 @@ info("get company");
 
     public function getResourceInvitations($items, $resourceKeyId)
     {
-        info("get resource {$resourceKeyId} invitations");
+        // info("get resource {$resourceKeyId} invitations");
 
         $transformed = [];
 
@@ -955,50 +1142,40 @@ info("get company");
         return $transformed;
     }
 
-    public function getCreditItems($items)
+    public function getCreditItems($balance)
     {
         info("get credit items");
 
         $transformed = [];
 
-        foreach ($items as $item) {
-
-            // if($item->cost < 0)
-            //     $item->cost = $item->cost * -1;
-
-            $item->qty = $item->qty * -1;
-
-            // if($item->discount < 0)
-            //     $item->discount = $item->discount * -1;
-
             $transformed[] = [
-                'id' => $item->id,
-                'quantity' => (float) $item->qty,
-                'cost' => (float) $item->cost,
-                'product_key' => $item->product_key,
-                'notes' => $item->notes,
-                'discount' => (float) $item->discount,
-                'tax_name1' => (string)$item->tax_name1,
-                'tax_rate1' => (float) $item->tax_rate1,
-                'tax_name2' => (string) $item->tax_name2,
-                'tax_rate2' => (float) $item->tax_rate2,
-                'tax_name3' => (string) '',
-                'tax_rate3' => (float) 0,
-                'date' => Carbon::parse($item->created_at)->toDateString(),
-                'custom_value1' => $item->custom_value1 ?: '',
-                'custom_value2' => $item->custom_value2 ?: '',
+                'id' => '',
+                'quantity' => (float) 1,
+                'cost' => (float) $balance,
+                'product_key' => trans('texts.balance'),
+                'notes' => trans('texts.credit_balance'),
+                'discount' => 0,
+                'tax_name1' => '',
+                'tax_rate1' => 0,
+                'tax_name2' => '',
+                'tax_rate2' => 0,
+                'tax_name3' => '',
+                'tax_rate3' => 0,
+                'date' => '',
+                'custom_value1' => '',
+                'custom_value2' => '',
                 'custom_value3' => '',
                 'custom_value4' => '',
-                'type_id' => (string)$item->invoice_item_type_id,
+                'type_id' => '1',
             ];
-        }
+
 
         return $transformed;
     }
 
     public function getInvoiceItems($items)
     {
-        info("get invoice items");
+        // info("get invoice items");
 
         $transformed = [];
 
@@ -1030,8 +1207,6 @@ info("get company");
 
     public function getQuotes()
     {
-        info("get quotes");
-
 
         $transformed = [];
 
@@ -1039,6 +1214,8 @@ info("get company");
             ->where('invoice_type_id', INVOICE_TYPE_QUOTE)
             ->withTrashed()
             ->get();
+
+        info("get quotes => " . $quotes->count());
 
         foreach ($quotes as $quote) {
             $transformed[] = [
@@ -1065,7 +1242,7 @@ info("get company");
                 'tax_name2' => $quote->tax_name2,
                 'tax_rate1' => $quote->tax_rate1,
                 'tax_rate2' => $quote->tax_rate2,
-                'invoice_id' => $quote->quote_invoice_id,
+                'invoice_id' => Invoice::getPrivateId($quote->quote_invoice_id),
                 'custom_surcharge1' => $quote->custom_value1 ?: '',
                 'custom_surcharge2' => $quote->custom_value2 ?: '',
                 'custom_value1' => $quote->custom_text_value1 ?: '',
@@ -1115,7 +1292,6 @@ info("get company");
 
     public function getPayments()
     {
-        info("get payments");
 
         $transformed = [];
 
@@ -1123,6 +1299,9 @@ info("get company");
             ->where('payment_status_id', '!=', PAYMENT_STATUS_VOIDED)
             ->withTrashed()
             ->get();
+
+        info("get payments => " . $payments->count());
+
 
         foreach ($payments as $payment) {
             $transformed[] = [
@@ -1144,6 +1323,7 @@ info("get company");
                 'refunded' => $payment->refunded ?: 0,
                 'date' => $payment->payment_date,
                 'transaction_reference' => $payment->transaction_reference ?: '',
+                'private_notes' => $payment->private_notes ?: '',
                 'payer_id' => $payment->payer_id,
                 'is_deleted' => (bool)$payment->is_deleted,
                 'exchange_rate' => $payment->exchange_rate ? number_format((float) $payment->exchange_rate, 6) : null,
@@ -1183,12 +1363,28 @@ info("get company");
     const SEPA = 29;
     const GOCARDLESS = 30;
     const CRYPTO = 31;
+
+    const MOLLIE_BANK_TRANSFER = 34;
+    const KBC = 35;
+    const BANCONTACT = 36;
+    const IDEAL = 37;
+    const HOSTED_PAGE = 38;
+    const GIROPAY = 39;
+    const PRZELEWY24 = 40;
+    const EPS = 41;
+    const DIRECT_DEBIT = 42;
+    const BECS = 43;
+    const ACSS = 44;
+    const INSTANT_BANK_PAY = 45;
+    const FPX = 46;
     */
     private function transformPaymentType($payment_type_id)
     {
         switch ($payment_type_id) {
+            case 4:
+                return 42;
             case PAYMENT_TYPE_CREDIT:
-                return 1;
+                return 32;
             case PAYMENT_TYPE_ACH:
                 return 4;
             case PAYMENT_TYPE_VISA:
@@ -1209,6 +1405,8 @@ info("get company");
                 return 12;
             case PAYMENT_TYPE_PAYPAL:
                 return 13;
+            case 16:
+                return 15;    
             case PAYMENT_TYPE_CARTE_BLANCHE:
                 return 16;
             case PAYMENT_TYPE_UNIONPAY:
@@ -1233,7 +1431,9 @@ info("get company");
                 return 30;
             case PAYMENT_TYPE_BITCOIN:
                 return 31;
-
+            case 2:
+                return 4;
+                
             default:
                 return $payment_type_id;
         }
@@ -1249,11 +1449,12 @@ info("get company");
 
     private function getCredits()
     {
-        info("get credits");
 
         $credits = Credit::where('account_id', $this->account->id)->where('balance', '>', 0)->whereIsDeleted(false)
             ->withTrashed()
             ->get();
+
+        info("get credits => " . $credits->count());
 
         $transformed = [];
 
@@ -1279,9 +1480,11 @@ info("get company");
 
     private function getDocuments()
     {
-        info("get documents");
 
         $documents = Document::where('account_id', $this->account->id)->get();
+
+        info("get documents => " . $documents->count());
+
 
         $transformed = [];
 
@@ -1322,12 +1525,9 @@ info("get company");
 
             $fees_and_limits = $this->transformFeesAndLimits($gateway_type);
 
-info("generated fees and limits = ");
-info(print_r($fees_and_limits,1));
 
             $translated_gateway_type = $this->translateGatewayTypeId($gateway_type);
 
-info("translated gateway_type = {$translated_gateway_type}");
 
             $fees->{$translated_gateway_type} = $fees_and_limits;
         }
@@ -1337,9 +1537,10 @@ info("translated gateway_type = {$translated_gateway_type}");
 
     private function getCompanyGateways()
     {
-        info("get get company gateways");
 
         $account_gateways = AccountGateway::where('account_id', $this->account->id)->withTrashed()->get();
+
+        info("get get company gateways => " . $account_gateways->count());
 
         $transformed = [];
 
@@ -1357,7 +1558,7 @@ info("translated gateway_type = {$translated_gateway_type}");
             }
             catch(\Exception $e){
             
-                info($config);
+                // info($config);
 
             }
 
@@ -1537,10 +1738,9 @@ info("translated gateway_type = {$translated_gateway_type}");
     private function getClientGatewayTokens()
     {
 
-        info("get client gateway tokens");
-
-
         $payment_methods = PaymentMethod::where('account_id', $this->account->id)->withTrashed()->get();
+
+        info("get client gateway tokens => " . $payment_methods->count());
 
         $transformed = [];
 
@@ -1549,6 +1749,9 @@ info("translated gateway_type = {$translated_gateway_type}");
         foreach ($payment_methods as $payment_method) {
             $contact = Contact::where('id', $payment_method->contact_id)->withTrashed()->first();
             $agt = AccountGatewayToken::where('id', $payment_method->account_gateway_token_id)->withTrashed()->first();
+
+            if(!$contact && !$agt)
+                continue;
 
             $transformed[] = [
                 'id' => $payment_method->id,
@@ -1570,10 +1773,10 @@ info("translated gateway_type = {$translated_gateway_type}");
 
     private function getPaymentTerms()
     {
-        info("get payment terms");
-
 
         $payment_terms = PaymentTerm::where('account_id', 0)->orWhere('account_id', $this->account->id)->withTrashed()->get();
+
+        info("get payment terms => " . $payment_terms->count());
 
         $transformed = [];
 
@@ -1601,9 +1804,9 @@ info("translated gateway_type = {$translated_gateway_type}");
 
     private function getTaskStatuses()
     {
-        info("get task statuses");
-
         $task_statuses = TaskStatus::where('account_id', $this->account->id)->withTrashed()->get();
+
+        info("get task statuses => " . $task_statuses->count());
 
         if($task_statuses->count() == 0)
         {
@@ -1647,9 +1850,9 @@ info("translated gateway_type = {$translated_gateway_type}");
 
     private function getExpenseCategories()
     {
-        info("get expense categories");
-
         $expense_categories = ExpenseCategory::where('account_id', $this->account->id)->withTrashed()->get();
+
+        info("get expense categories => " . $expense_categories->count());
 
         $transformed = [];
 
@@ -1672,9 +1875,9 @@ info("translated gateway_type = {$translated_gateway_type}");
 
     private function getExpenses()
     {
-        info("get expenses");
-
         $expenses = Expense::where('account_id', $this->account->id)->withTrashed()->get();
+
+        info("get expenses => " . $expenses->count());
 
         $transformed = [];
 
@@ -1700,7 +1903,7 @@ info("translated gateway_type = {$translated_gateway_type}");
                 'invoice_documents' => $expense->invoice_documents,
                 'invoice_id' => $expense->invoice_id,
                 'payment_date' =>  $expense->payment_date,
-                'payment_type_id' =>  $expense->payment_type_id,
+                'payment_type_id' =>  $this->transformPaymentType($expense->payment_type_id),
                 'private_notes' =>  $expense->private_notes,
                 'public_notes' =>  $expense->public_notes,
                 'recurring_expense_id' =>  $expense->recurring_expense_id,
@@ -1727,12 +1930,12 @@ info("translated gateway_type = {$translated_gateway_type}");
 
     private function getTasks()
     {
-        info("get tasks");
-
 
         $tasks = Task::where('account_id', $this->account->id)
                         ->withTrashed()
                         ->get();
+
+        info("get tasks => " . $tasks->count());
 
         $transformed = [];
 
@@ -1770,11 +1973,13 @@ info("translated gateway_type = {$translated_gateway_type}");
 
     private function getProjects()
     {
-        info("get projects");
 
         $projects = Project::where('account_id', $this->account->id)
                              ->withTrashed()
                              ->get();
+
+        info("get projects => " . $projects);
+
 
          $transformed = [];
 
@@ -1812,9 +2017,9 @@ info("translated gateway_type = {$translated_gateway_type}");
 
     protected function getVendors()
     {
-        info("get vendors");
-
         $vendor_query = Vendor::where('account_id', $this->account->id)->withTrashed()->get();
+
+        info("get vendors => " . $vendor_query->count());
 
         $vendors = [];
 
@@ -1859,7 +2064,7 @@ info("translated gateway_type = {$translated_gateway_type}");
 
     protected function getVendorContacts($contacts)
     {
-        info("get vendor contacts");
+        info("get vendor contacts => " . $contacts->count());
 
         $transformed = [];
 
@@ -1878,7 +2083,7 @@ info("translated gateway_type = {$translated_gateway_type}");
                 'custom_value4' => '',
                 'email' => $contact->email,
                 'is_primary' => (bool)$contact->is_primary,
-                'send_email' => (bool)$contact->send_invoice ?: false,
+                'send_email' => (bool)$contact->send_invoice ?: true,
                 'confirmed' => $contact->confirmation_token ? true : false,
                 'email_verified_at' => $contact->created_at->toDateTimeString(),
                 'last_login' => $contact->last_login,
@@ -1934,8 +2139,8 @@ info("translated gateway_type = {$translated_gateway_type}");
         }
 
         $fees_and_limits = new \stdClass();
-        $fees_and_limits->min_limit = $ags->min_limit;
-        $fees_and_limits->max_limit = $ags->max_limit;
+        $fees_and_limits->min_limit = $ags->min_limit > 0 ? $ags->min_limit : -1;
+        $fees_and_limits->max_limit = $ags->max_limit > 0 ? $ags->max_limit : -1;
         $fees_and_limits->fee_amount = $ags->fee_amount;
         $fees_and_limits->fee_percent = $ags->fee_percent;
         $fees_and_limits->fee_tax_name1 = $ags->tax_name1;
